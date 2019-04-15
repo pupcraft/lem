@@ -43,11 +43,27 @@
 (define-key *completion-mode-keymap* "Return"    'completion-select)
 (define-key *completion-mode-keymap* "Space"    'completion-insert-space-and-cancel)
 (define-key *completion-mode-keymap* 'delete-previous-char 'completion-delete-prevous-char)
+(define-key *completion-mode-keymap* 'backward-delete-word 'completion-backward-delete-word)
 
 (define-attribute completion-attribute
   (t :foreground "white" :background "RoyalBlue"))
 (define-attribute non-focus-completion-attribute
-  (t :foreground "black" :background "gray"))
+  (t :foreground "white" :background "#444"))
+(define-attribute detail-attribute
+  (t :foreground "gray" :background "#444"))
+
+(defclass print-spec ()
+  ((label-width
+    :initarg :label-width
+    :reader label-width)))
+
+(defmethod lem.popup-window:apply-print-spec ((print-spec print-spec) point item)
+  (insert-string point (completion-item-label item))
+  (move-to-column point (label-width print-spec) t)
+  (line-end point)
+  (insert-string point "  ")
+  (insert-string point (completion-item-detail item)
+                 :attribute 'detail-attribute))
 
 (defvar *current-completion-spec* nil)
 (defvar *last-items* nil)
@@ -64,7 +80,7 @@
     (run-completion-1 *current-completion-spec* t)))
 
 (defun call-focus-action ()
-  (alexandria:when-let* ((item (lem.popup-window::get-focus-item))
+  (alexandria:when-let* ((item (lem.popup-window:get-focus-item))
                          (fn (completion-item-focus-action item)))
     (funcall fn)))
 
@@ -77,6 +93,10 @@
 
 (define-command completion-delete-prevous-char (n) ("p")
   (delete-previous-char n)
+  (completion-again))
+
+(define-command completion-backward-delete-word (n) ("p")
+  (backward-delete-word n)
   (completion-again))
 
 (define-command completion-next-line () ()
@@ -115,7 +135,7 @@
                                          mismatch)))))
       n)))
 
-(define-command completion-narrowing-down-or-next-line () ()
+(defun narrowing-down ()
   (when *last-items*
     (let ((n (partial-match (mapcar #'completion-item-label *last-items*))))
       (multiple-value-bind (start end)
@@ -124,13 +144,20 @@
                (completion-insert (current-point)
                                   (first *last-items*)
                                   n)
-               (completion-again))
+               (completion-again)
+               t)
               ((alexandria:length= *last-items* 1)
                (completion-insert (current-point)
                                   (first *last-items*))
-               (completion-again))
+               (completion-again)
+               t)
               (t
-               (completion-next-line)))))))
+               nil))))))
+
+(define-command completion-narrowing-down-or-next-line () ()
+  (when *last-items*
+    (or (narrowing-down)
+        (completion-next-line))))
 
 (defun start-completion-mode (completion-spec)
   (setf *current-completion-spec* completion-spec)
@@ -179,15 +206,23 @@
           (repeat
            (lem-if:popup-menu-update (implementation) items))
           (t
-           (lem-if:display-popup-menu (implementation)
-                                      items
-                                      :action-callback (lambda (item)
-                                                         (completion-insert (current-point) item)
-                                                         (completion-end))
-                                      :print-function 'completion-item-label
-                                      :focus-attribute 'completion-attribute
-                                      :non-focus-attribute 'non-focus-completion-attribute)
-           (start-completion-mode completion-spec)))))
+           (lem-if:display-popup-menu
+            (implementation)
+            items
+            :action-callback
+            (lambda (item)
+              (completion-insert (current-point) item)
+              (completion-end))
+            :print-spec
+            (make-instance 'print-spec
+                           :label-width
+                           (loop :for item :in items
+                                 :maximize (1+ (length (completion-item-label item)))))
+            :focus-attribute 'completion-attribute
+            :non-focus-attribute 'non-focus-completion-attribute)
+           (start-completion-mode completion-spec)
+           (unless repeat
+             (narrowing-down))))))
 
 (defun run-completion (completion)
   (let ((completion-spec
@@ -237,11 +272,42 @@
             (let ((label (pathname-name* filename)))
               (with-point ((s (lem::minibuffer-start-point))
                            (e (lem::minibuffer-start-point)))
-                (make-completion-item :label label
-                                      :start (character-offset
-                                              s
-                                              (length (namestring (uiop:pathname-directory-pathname str))))
-                                      :end (line-end e)))))
+                (make-completion-item
+                 :label label
+                 :start (character-offset
+                         s
+                         (length (namestring (uiop:pathname-directory-pathname str))))
+                 :end (line-end e)))))
           (completion-file str directory :directory-only directory-only)))
 
+(defun completion-buffer (str)
+  (let ((candidates1
+          (completion str (buffer-list)
+                      :test (lambda (str buffer)
+                              (or (search str (buffer-name buffer))
+                                  (and (buffer-filename buffer)
+                                       (search str (buffer-filename buffer)))))))
+        (candidates2
+          (completion str (buffer-list)
+                      :test (lambda (str buffer)
+                              (or (lem::fuzzy-match-p str (buffer-name buffer))
+                                  (and (buffer-filename buffer)
+                                       (lem::fuzzy-match-p str (buffer-filename buffer))))))))
+    (dolist (c candidates1)
+      (setf candidates2 (delete c candidates2)))
+    (append candidates1 candidates2)))
+
+(defun minibuffer-buffer-complete (str)
+  (loop :for buffer :in (completion-buffer str)
+        :collect (with-point ((s (lem::minibuffer-start-point))
+                              (e (lem::minibuffer-start-point)))
+                   (make-completion-item
+                    :detail (alexandria:if-let (filename (buffer-filename buffer))
+                                               (enough-namestring filename (probe-file "./"))
+                                               "")
+                    :label (buffer-name buffer)
+                    :start s
+                    :end (line-end e)))))
+
 (setf *minibuffer-file-complete-function* 'minibuffer-file-complete)
+(setf *minibuffer-buffer-complete-function* 'minibuffer-buffer-complete)

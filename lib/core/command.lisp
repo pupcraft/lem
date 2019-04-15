@@ -589,10 +589,27 @@
                     (message "Loaded ~A." name))
         (t (message "Can't find Library ~A." name))))
 
+(defun get-git-hash (&optional (system :lem))
+  (let* ((component (asdf:find-system system))
+         (path (when component
+                 (asdf:component-pathname component)))
+         (git-path (when path
+                     (merge-pathnames ".git/" path))))
+    (when (uiop:directory-exists-p git-path)
+      (uiop:with-current-directory (path)
+        (string-trim
+         (list #\Newline #\Space)
+         (with-output-to-string (stream)
+           (uiop:run-program "git rev-parse --short HEAD"
+                             :output stream)))))))
+
+(defvar *git-revision* (get-git-hash :lem))
+
 (define-command lem-version (&optional name) ("p")
   (let ((version
-          (format nil "lem ~A (~A-~A)"
+          (format nil "lem ~A~@[-~A~] (~A-~A)"
                   (asdf:component-version (asdf:find-system :lem))
+                  *git-revision*
                   (machine-type)
                   (machine-instance))))
     (when (eql name 1)

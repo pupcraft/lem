@@ -7,7 +7,8 @@
                "uiop"
                "lem-core")
   :serial t
-  :components ((:file "errors")
+  :components ((:file "util")
+               (:file "errors")
                (:file "swank-protocol")
                (:file "package")
                (:file "lisp-ui-mode")
@@ -17,4 +18,5 @@
                (:file "sldb")
                (:file "inspector")
                (:file "apropos-mode")
-               (:file "paren-coloring")))
+               (:file "paren-coloring")
+               (:file "misc-commands")))
